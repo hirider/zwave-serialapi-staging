@@ -1,0 +1,4324 @@
+/**
+\page migration Migrating to Z/IP Gateway from Third-Party Gateways
+
+\section migration_intro Introduction
+
+With the release of Z/IP Gateway 7.x it is now a certification requirement to
+use it for making Z-Wave gateways.
+
+It is possible to perform a \em migration to the latest Z/IP gateway where
+essential configuration data is transferred from the legacy gateway to the Z/IP
+gateway such that when the Z/IP gateway is started, it will immediately be fully
+functional with all the same included nodes.
+
+The migration tools can also be used to restore a the ZGW node database from if 
+the eeprom.dat file for sqlite database has been lost. This recovery scheme is 
+only possible if a recovery JSON file can be generated from external data
+sources. 
+
+\note The current migration tools do not support importing IMA data and mailbox messages.
+
+\section migration_process The Migration Process
+
+\subsection migration_prerequisites Prerequisites
+
+Migration is supported for gateways using Z-Wave static or bridge controllers
+with firmware version 6.60 or later.
+
+\subsection migration_process_overview Overview
+
+In general, there are \b two migrations scenarios: <b>software migration</b> and
+<b>hardware migration</b>. They are briefly outlined here but will be described
+in detail in the following sections.
+
+<b>Software Migration:</b>
+
+Replace legacy gateway software with Z/IP Gateway software and updating the
+firmware on a 500-series Z-Wave module with the latest Z-Wave bridge firmware.
+The physical gateway device and the 500-series Z-Wave module are reused.
+
+-# Construct a \c zgw.json file.
+-# Install and configure Z/IP Gateway without starting it.
+-# Stop legacy gateway.
+-# Run migration import script.
+-# Reboot gateway device to reconfigure network setting and start Z/IP Gateway.
+
+It should be noted that the execution time of the migration tool is ~1 minute, due to
+flashing of new firmware. USB devices are a bit faster than serial devices.
+
+<b>Hardware Migration:</b>
+
+A full migration where the legacy gateway device and/or the 500-series Z-Wave
+module is replaced.
+
+-# Construct a \c zgw.json file
+-# On old device: stop legacy gateway.
+-# On old device: install Z/IP gateway (to provide migration tools).
+   Don't configure or start it.
+-# On new device: install and configure Z/IP gateway without starting it.
+-# On old device: extract NVM content from Z-Wave module.
+-# Convert NVM content to format required by Z-Wave module on new device.
+-# On new device: program Z-Wave module with latest Z-Wave bridge controller firmware.
+-# On new device: write converted NVM content to Z-Wave module.
+-# On new device: run gateway restore utility.
+-# On new device: reboot gateway device to reconfigure network setting and start Z/IP gateway.
+
+<b>Recovery:</b>
+-# Construct a \c zgw.json file
+-# On new device: run gateway restore utility.
+-# Reboot gateway device to reconfigure network setting and start Z/IP Gateway.
+
+
+\subsection migration_preparation Prepare the Migration
+
+<ol>
+
+<li> Download Z-Wave Embedded SDK from
+https://www.silabs.com/products/development-tools/software/z-wave/embedded-sdk
+and extract the serialapi bridge controller firmware image with the correct
+Z-Wave chip and frequency.
+
+<ul>
+    <li> The embedded SDK for 500-series chips is version 6.81.xx and the firmware
+      image to extract is serialapi_controller_bridge_\<chiptype\>_\<freq\>.hex
+
+    <li> The embedded SDK for 700-series chips is version 7.xx and the firmware
+      image to extract is ZW_SerialAPI_Controller_7.xx.xx_EFR32ZG14_REGION_\<freq\>.hex
+</ul>
+
+<li>Construct a \c zgw.json file containing data to be migrated from the
+legacy gateway into the new Z/IP Gateway. See \ref zgw_json_schema for details
+about this file.
+
+<li>Check that the structure of \c zgw.json file is correct by validating it
+against the zipgateway JSON-schema file. See \ref migration_json_validation.
+
+<li>Download, install, and configure Z/IP gateway on the gateway device. Don't
+start it or reboot the OS at this time. See \ref build and \ref install
+
+\note If performing a <em>hardware migration</em>, Z/IP gateway must be
+installed on \em both the \b old and the \b new gateway device. On the \b old
+device only a few migration tools from the Z/IP gateway installation will be
+used - the Z/IP gateway should never run on the old device and for that reason
+it does not need to be configured there.
+
+\note If any of the values for APP_MANUFACTURER_ID, APP_PRODUCT_TYPE_ID or APP_PRODUCT_ID  
+has been changed in the SerialAPI controller target firmware, the values must be 
+updated in nvm500_import.c. If the controller firmware is taken directly from a
+SDK no action is needed. 
+</ol>
+
+
+When the above steps have been completed the actual migration can be performed.
+
+
+
+\subsection migration_software Performing a Software Migration
+
+For a <em>software migration</em>, where the gateway device and 500-series
+Z-Wave module are updated to use Z/IP gateway and new Z-Wave bridge controller
+firmware, do the following:
+
+-# Ensure all steps mentioned in \ref migration_preparation have been performed.
+-# Stop legacy gateway and modify system scripts to ensure it is not started
+automatically again, ever.
+-# Run the migration import script \c zgw_import.sh. See \ref
+migration_run_import_script.
+-# Reboot the device. This will ensure that changes to network settings
+performed during Z/IP gateway installation are applied. During the reboot Z/IP
+gateway will be started automatically. See \ref run.
+-# The migration is complete!
+
+\subsection migration_recovery Node database recovery
+
+This recovery scheme is intended for the event where the node database 
+eeprom.dat or zipgateway.db has been lost. A prerequisite for this recovery 
+scheme is that the migration JSON file can be generated form external 
+datasources.
+
+For this recovery scheme a special "offline" is supported by the migration 
+tool. See \ref migration_running_zgw_restore
+
+The steps required in Node database recovery is:
+
+-# Construct JSON file form external data source.
+-# Upgrade ZGW debian package if needed
+-# Run the zgw_restore tool 
+-# Start the gateway
+
+\subsection migration_hardware Performing a Hardware Migration
+
+For a <em>hardware migration</em>, where the gateway device and Z-Wave module are
+replaced, the \c zgw_import.sh script cannot currently be used. Instead do the
+following:
+
+<ol>
+
+<li> Ensure all steps mentioned in \ref migration_preparation have been performed.
+
+<li> On the \b old gateway device stop legacy gateway and modify system scripts to
+ensure it is not started automatically again, ever.
+
+<li> On the \b old gateway device run the \c zw_programmer utility to extract
+the NVM (Non Volatile Memory) content from the old Z-Wave module and save it to
+a (binary) file \c nvm_old.bin. Make a note of the NVM layout version (\em
+nvm_version) reported by \c zw_programmer (\c "static6.6" in the following
+example). See \ref migration_running_zw_programmer.
+
+\verbatim
+# zw_programmer -s /dev/ttyUSB0 -r nvm_old.bin
+...
+Serial version: ..., NVM: static6.6
+...
+\endverbatim
+
+<li> On the \b old gateway device run the \c zw_nvm_converter utility to
+convert/export the binary NVM file \c nvm_old.bin to a version independent \c
+nvm.json file. Provide \c zw_nvm_converter with the NVM layout version (\em
+nvm_version) noted in the previous step. See \ref
+migration_running_zw_nvm_converter.
+
+\verbatim
+$ zw_nvm_converter -e static6.6  nvm_old.bin  nvm.json
+\endverbatim
+
+<li> Transfer the \c nvm.json file from the \b old gateway device to the \b new
+gateway device.
+
+<li> On the \b new gateway device run \c zw_programmer to program the Z-Wave
+module with the firmware hex image previously downloaded as part of the Z-Wave
+Embedded SDK. See \ref migration_running_zw_programmer.
+
+\verbatim
+# zw_programmer -s /dev/ttyUSB0 -p serialapi_controller_bridge_ZM5304_EU.hex
+\endverbatim
+
+<li> On the \b new gateway device run \c zw_nvm_converter to convert/import the
+version independent \c nvm.json file to a binary \c nvm_new.bin file specific to
+the firmware version of the Z-Wave module on the new gateway device. See \ref
+migration_running_zw_nvm_converter.
+
+\verbatim
+$ zw_nvm_converter -i bridge6.8  nvm.json  nvm_new.bin
+\endverbatim
+
+<li> On the \b new gateway device run \c zw_programmer to write the converted
+NVM content to the Z-Wave module. See \ref migration_running_zw_programmer.
+
+\verbatim
+# zw_programmer -s /dev/ttyUSB0 -w nvm_new.bin
+\endverbatim
+
+<li> Transfer the \c zgw.json file prepared previously (see \ref
+migration_preparation) to the \b new gateway device.
+
+<li> On the \b new gateway device run the ZGW Restore Tool to create
+the zipgateway persistence data (zipgateway.db,
+provisioning_list_store.dat, and NVM application area) from the
+zgw.json file and the data in the bridge controller.  See \ref
+migration_running_zgw_restore.
+
+\verbatim
+# zgw_restore -s /dev/ttyUSB0 -j zgw.json
+\endverbatim
+
+<li> Reboot the \b new Z/IP Gateway device. This will ensure that
+changes to network settings performed during Z/IP Gateway installation
+are applied. During the reboot the zipgateway process will be started
+automatically, as a service.  See \ref run.
+
+<li> The migration is complete!
+
+</ol>
+
+
+
+\section migration_tools Migration Support Tools
+
+A number of tools are available to support a migration to Z/IP gateway.
+
+\subsection migration_run_import_script Running the Import Script
+
+The script \c zgw_import.sh (\c /usr/local/bin/zgw_import.sh)
+performs the steps needed to perform a <em>software migration</em> on same
+hardware.
+
+\verbatim
+Usage: zgw_import.sh -s <serial dev> -f <target_firmware> -p <protocol_name> -j <json_file>
+   -s <serial dev>      : device file to which the Z-Wave controller is attached,
+                          defaults to the settings in zipgateway.cfg
+   -f <target_firmware> : hex or gbl file of the bridge controller firmware to be
+                          flashed on the module
+   -p <protocol_name>   : name of the protocol which the firmware file implements
+                          e.g. bridge6.8
+   -j <json_file>       : ZGW Data JSON File that contains the data to import
+   -o                   : offline mode no firmware update will be attempted
+  
+\endverbatim
+
+For example:
+
+\verbatim
+# zgw_import.sh -s /dev/ttyUSB0 -p bridge6.8 -f serialapi_controller_bridge_ZM5304_EU.hex -j zgw.json
+\endverbatim
+
+\c target_firmware is the new Z-Wave bridge controller firmware image file.
+
+\c protocol_name is the protocol name corresponding to the firmware image. It
+can be one of the following:
+
+- \c bridge6.8 : Z-Wave Bridge 6.8x
+- \c bridge6.7 : Z-Wave Bridge 6.7x
+- \c bridge6.6 : Z-Wave Bridge 6.6x
+
+Normally a protocol name corresponding to the latest 500-series firmware image
+should be used. Currently this is \c bridge6.8.
+
+\note The script will compare the version of the firmware on the Z-Wave module
+with the version specified with \c protocol_name, and \b only upgrade the NVM
+and program the new firmware image \b if the versions are different. For this
+reason, if the Z-Wave module e.g. contains 6.8x firmware (e.g. 6.81.01) and the \c
+target_firmware file contains a 6.81.03 image mandating \c protocol_name to be
+\c bridge6.8, then the Z-Wave module will \b not be re-programmed with that
+newer image!
+
+
+
+\subsection migration_running_zw_programmer Running zw_programmer
+
+The \c zw_programmer utility (\c /usr/local/bin/zw_programmer) can
+be used to program a Z-Wave module as well as reading and writing its NVM
+content.
+
+\verbatim
+Usage: zw_programmer -s serial_device [ -r nvm.bin | -w nvm.bin | -p firmware_image_file [-a] | -t ]
+
+   -s specifies the path of for the Serial device / Z-Wave module.
+   -r read the nvm contents from the serial_device into the specified filename in binary format.
+   -w write the nvm contents to the serial_device from the specified filename in binary format.
+   -p program a new firmware onto the serial_device from the specified filename.
+      NB: for 500-series chips use a .hex file. For 700-series chips use a .gbl file.
+   -a use if the chip is already in Auto Programming Mode (enforced by holding down the reset button).
+   -t test mode. Will connect to serial device and show info about the Z-Wave module.
+\endverbatim
+
+
+
+\subsection migration_running_zw_nvm_converter Running zw_nvm_converter
+
+The \c zw_nvm_converter utility (\c /usr/local/bin/zw_nvm_converter)
+can be used to convert NVM (Non Volatile Memory) content exported from a
+specific Z-Wave firmware version to NVM content to be imported into a different
+Z-Wave firmware version.
+
+\verbatim
+Usage: zw_nvm_converter [-i <format_name> |-e <format_name> ] <src> <dst>
+   -e Export mode, produce a JSON file from an NVM file.
+   -i Import mode, produce a NVM file from a JSON file.
+
+Note for bridge7.16 and onward NVM migration is handled by the Z-Wave
+module automatically so the corresponding steps for zw_nvm_converter should be skipped.
+
+supported formats are:
+
+   bridge7.15 : NVM Converter for Z-Wave Bridge 7.15
+   bridge7.12 : NVM Converter for Z-Wave Bridge 7.12
+   bridge7.11 : NVM Converter for Z-Wave Bridge 7.11
+   bridge6.8 : NVM Converter for Z-Wave Bridge 6.80
+   bridge6.7 : NVM Converter for Z-Wave Bridge 6.70
+   bridge6.6 : NVM Converter for Z-Wave Bridge 6.60
+   static6.8 : NVM Converter for Z-Wave Static 6.80
+   static6.7 : NVM Converter for Z-Wave Static 6.70
+   static6.6 : NVM Converter for Z-Wave Static 6.60
+\endverbatim
+
+Note that as stated in the help message about supported formats, for bridge7.16 and onward NVM migration is handled by the Z-Wave module automatically so the corresponding steps for zw_nvm_converter should be skipped.
+For example, to transfer the NVM content \b from a 500-series static controller
+on /dev/ttyUSB0 running firmware 6.60 \b to a 500-series bridge controller on
+/dev/ttyUSB1 running firmware 6.81.03:
+
+\verbatim
+# zw_programmer -s /dev/ttyUSB0 -r controller_66.bin
+$ zw_nvm_converter -e static6.6 controller_66.bin controller.json
+$ zw_nvm_converter -i bridge6.8 controller.json controller_68.bin
+# zw_programmer -s /dev/ttyUSB1 -w controller_68.bin
+\endverbatim
+
+To transfer the NVM content \b from a 700-series bridge controller
+on /dev/ttyUSB0 running firmware 7.16 \b to a 700-series bridge controller on
+/dev/ttyUSB1 running same version firmware 7.16 :
+
+\verbatim
+# zw_programmer -s /dev/ttyUSB0 -r controller_7_16.bin
+# zw_programmer -s /dev/ttyUSB1 -w controller_7_16.bin
+\endverbatim
+
+\note The NVM in a 500-series controller can hold 2 Kb of application data. On a
+700-series controller there is only set aside 512 bytes for application data.
+When converting the NVM between a 500-series controller and a 700-series
+controller (calling \c zw_nvm_converter with \c -i \c bridge7.11) the \c
+zw_nvm_converter will show the following warning message:
+
+\note \verbatim
+WARNING: "applicationData" will be truncated. Bytes with non-zero values: 2048. Max application data size in generated NVM image: 512.
+\endverbatim
+
+\note This means that the JSON file provided to \c zw_nvm_converter contains more than
+512 bytes of (non-zero) application data. Since the application area in a
+500-series controller NVM can be left uninitialized most of that data is
+probably just random. A Z/IP gateway will never store more than 512 bytes of
+application data.
+
+
+
+\subsection migration_running_zgw_restore Running zgw_restore
+
+The ZGW Restore Tool is used to restore the runtime state of the zipgateway
+process from a Z/IP Gateway migration package created based on the configuration
+of an older Z/IP Gateway (pre-7.11.01 release) or a third-party gateway.
+
+\verbatim
+Usage: zgw_restore -s serial_dev -j backup_file [-i installation_path] [-d data_path]
+   -s: Device name of the serialport which has the Z-Wave controller module attached
+   -j: Location of the json backup file to use for the restore
+   -o: Offline mode, read all data json file without using the controller module
+   -i: Installation prefix, path to the gateway configuration files (default /usr/local/etc/)
+   -d: Location of the zipgateway storage files, zipgateway.db and provision_list.dat (default /usr/local/var/lib/zipgateway/)
+\endverbatim
+
+The restore tool has a special offline mode, where a
+zipgateway.db file can be re-constructed without access to the Z-Wave
+controller module. However the offline option require addition fields to be
+added to the JSON file. The additional fields are:
+ - zgw.nodeList[].isZGW
+ - zgw.nodeList[].zgwZWNodeData.nodeType
+ - zgw.nodeList[].zgwZWNodeData.mode
+
+It should also be noted that the following fields in the JSON file are ignored
+in offline mode:
+ - zwNetworkData.zwSecurity.ECDHPrivateKey
+ - zwNetworkData.zwSecurity.S0key
+ - zwNetworkData.zwSecurity.S2AuthenticatedKey
+ - zwNetworkData.zwSecurity.S2UnauthenticatedKey
+ - zwNetworkData.zwSecurity.S2AccessKey
+ - zwNetworkData.zwSecurity.S2UnauthenticatedKeyLR
+ - zwNetworkData.zwSecurity.S2AccessKeyLR
+
+
+\see \ref zgw-restore.
+
+\subsection migration_json_validation Validating Gateway JSON Import Files
+
+The ZGW Restore Tool assumes that the bridge controller has already
+been restored (see \ref migration_running_zw_nvm_converter).  It then
+uses the restored Z-Wave bridge controller and a ZGW Data File to
+regenerate the runtime state of the zipgateway process.  This data
+file must be constructed from data extracted from the original
+controller (see \ref zgw_json_schema).
+
+Customers with third-party gateways should develop tools to automatically
+generate the ZGW Data File. To aid in the construction of the file
+a JSON schema file (see https://json-schema.org) is available in the Z/IP
+Gateway bundle at this location: \c systools/doc/zgw_json.schema.json
+
+The generated JSON files should be checked for compliance with \c
+zgw_json.schema.json. This is done using a <em>JSON schema validator</em>.
+
+One such validator is https://github.com/Julian/jsonschema which is a set of
+Python scripts that can be installed with \c pip as:
+
+\verbatim
+$ pip install jsonschema
+\endverbatim
+
+To validate a JSON file run \c jsonschema validator this way:
+
+\verbatim
+$ jsonschema -i my_zgw.json systools/doc/zgw_json.schema.json
+\endverbatim
+
+If the ZGW Data File is not compliant with the schema, then \c jsonschema will
+indicate what the error is. In some cases the error messages will unfortunately
+be quite difficult to use for troubleshooting.
+
+In general \c zgw_restore should not be executed using JSON files that have not
+been validated against \c zgw_json.schema.json.
+
+
+
+\section zgw_json_schema ZGW Data File
+
+When migrating to a Z/IP Gateway from a different type of controller,
+the state of the zipgateway process must be re-created by the restore
+tool.  To allow this, the properties of the controller and the Z-Wave
+network must be written to a zipgateway JSON file (the ZGW Data File).  (Note
+that this is not the same JSON format as the one used by the NVM
+converter.)
+
+Several example zipgateway JSON files can be found in the \c
+systools/doc/ folder:
+
+- \c zgw_example_NoProbe.json : as much information as possible provided for
+  migration, so that the Z/IP Gateway does not need to probe the network.
+- \c zgw_example_FullProbe.json : as little information as possible provided
+  for migration so that Z/IP Gateway has to probe the network to function
+  normally. Note that the endpoint list for each node MUST have the correct
+  number of endpoints for the node, including the root device (endpoint 0). The
+  information for each endpoint can be minimal, see, e.g., node 4 in this example.
+- \c zgw_example_MinimalNoProbe.json : the minimal information provided for Z/IP
+  Gateway not to probe and work reasonably well after migration.
+
+The JSON schema for the ZGW Data File format is available at \c
+systools/doc/zgw_json.schema.json.
+
+According to the JSON schema some fields are optional. It should be
+noted that if some of the optional fields are left out for a node, the
+gateway may re-interview the node when starting up.
+
+If the zipgateway has to re-interview a node, this will be done
+immediately when the zipgateway process starts up, except for sleeping
+nodes.  Sleeping nodes will be interviewed when the zipgateway
+receives the first Wake Up Notification from that node.
+
+\note If the zipgateway receives many Wake Up Notifications within a
+short interval, or while it is still interviewing listening nodes, the
+interview of the sleeping node may fail, because the sleeping node
+only waits 10s for a reply.
+
+\note If the migration data provided in the ZGW Data File is not
+correct, the Z/IP Gateway may not behave correctly after migration.
+
+This section documents the JSON schema defining the ZGW Data File.
+
+\see For details on how these fields correspond to the data structures
+in the zipgateway process, see \ref sec_persist_org.
+
+\startuml
+hide circle
+skinparam classAttributeIconSize 0
+class "ZGWBackupInfo" [[migration.html#zgw_json_ZGWBackupInfo]]{
+    type: object
+    .. Members ..
+    +: versionMajor: [integer]
+    +: versionMinor: [integer]
+    -: sourceZGWVersion: [versionString]
+    -: sourceProtocolVersion: [versionString]
+    -: sourceChipType: [chipType]
+    -: timestamp: [timeStamp]
+}
+
+class "zgw" [[migration.html#zgw_json_zgw]]{
+    type: object
+    .. Members ..
+    +: zwNetworkData: [object]
+    -: zipLanData: [object]
+    -: zgwTemporaryAssociationData: [object]
+    +: nodeList: [array [object]]
+}
+
+class "zwNetworkData" as zgw.zwNetworkData  [[migration.html#zgw_json_zgw_zwNetworkData]]{
+    type: object
+    .. Members ..
+    +: zwSecurity: [object]
+}
+
+class "zwSecurity" as zgw.zwNetworkData.zwSecurity  [[migration.html#zgw_json_zgw_zwNetworkData_zwSecurity]]{
+    type: object
+    .. Members ..
+    -: S0key: [keyString]
+    -: S2UnauthenticatedKey: [keyString]
+    -: S2AuthenticatedKey: [keyString]
+    -: S2AccessKey: [keyString]
+    -: S2AuthenticatedKeyLR: [keyString]
+    -: S2AccessKeyLR: [keyString]
+    +: ECDHPrivateKey: [keyString]
+}
+
+class "zipLanData" as zgw.zipLanData  [[migration.html#zgw_json_zgw_zipLanData]]{
+    type: object
+    .. Members ..
+    -: macAddress: [string]
+}
+
+class "zgwTemporaryAssociationData" as zgw.zgwTemporaryAssociationData  [[migration.html#zgw_json_zgw_zgwTemporaryAssociationData]]{
+    type: object
+    .. Members ..
+    -: virtualNodeList: [array [integer]]
+}
+
+class "virtualNodeList" as zgw.zgwTemporaryAssociationData.virtualNodeList  [[migration.html#zgw_json_zgw_zgwTemporaryAssociationData_virtualNodeList]]{
+    type: array [integer]
+    .. Members ..
+}
+
+class "nodeList" as zgw.nodeList  [[migration.html#zgw_json_zgw_nodeList]]{
+    type: array [object]
+    .. Members ..
+    -: nodeUID: [object]
+    -: isZGW: [boolean]
+    -: zgwZWNodeData: [object]
+    -: ipData: [object]
+    -: pvsData: [object]
+}
+
+class "nodeUID" as zgw.nodeList.nodeUID  [[migration.html#zgw_json_zgw_nodeList_nodeUID]]{
+    type: object
+    .. Members ..
+    +: uidType: [string (enum)]
+    +: DSK: [DSKstring]
+    +: nodeId: [nodeId]
+    +: homeId: [homeId]
+}
+
+class "zgwZWNodeData" as zgw.nodeList.zgwZWNodeData  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData]]{
+    type: object
+    .. Members ..
+    -: grantedKeys: [uint8]
+    -: nodeProdId: [object]
+    +: endpoints: [array [object]]
+    +: probeState: [object]
+    -: zwNodeData: [object]
+    -: liveness: [object]
+    -: mode: [mode]
+    -: nodeType: [nodeType]
+}
+
+class "nodeProdId" as zgw.nodeList.zgwZWNodeData.nodeProdId  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId]]{
+    type: object
+    .. Members ..
+    +: manufacturerId: [uint16]
+    +: productType: [uint16]
+    +: productId: [uint16]
+}
+
+class "endpoints" as zgw.nodeList.zgwZWNodeData.endpoints  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData_endpoints]]{
+    type: array [object]
+    .. Members ..
+    -: endpointId: [uint8]
+    -: installerIcon: [uint16]
+    -: userIcon: [uint16]
+    -: endpointAggregation: [array [uint8]]
+    -: endpointInfoFrames: [object]
+    -: epMDNSData: [mDNSinfo]
+}
+
+class "endpointAggregation" as zgw.nodeList.zgwZWNodeData.endpoints.endpointAggregation  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointAggregation]]{
+    type: array [uint8]
+    .. Members ..
+}
+
+class "endpointInfoFrames" as zgw.nodeList.zgwZWNodeData.endpoints.endpointInfoFrames  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames]]{
+    type: object
+    .. Members ..
+    +: nonSecureNIF: [commandClassIdentifer]
+    -: secureNIF: [commandClassIdentifer]
+}
+
+class "probeState" as zgw.nodeList.zgwZWNodeData.probeState  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData_probeState]]{
+    type: object
+    .. Members ..
+    -: state: [string (enum)]
+    -: versionCap: [string]
+    -: ZWplusRoleType: [string]
+    -: ccVersions: [supportedCCsProperties]
+}
+
+class "zwNodeData" as zgw.nodeList.zgwZWNodeData.zwNodeData  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData]]{
+    type: object
+    .. Members ..
+    +: nodeId: [nodeId]
+}
+
+class "liveness" as zgw.nodeList.zgwZWNodeData.liveness  [[migration.html#zgw_json_zgw_nodeList_zgwZWNodeData_liveness]]{
+    type: object
+    .. Members ..
+    -: livenessState: [string (enum)]
+    -: wakeUpInterval: [integer]
+    -: lastAwake: [timeStamp]
+    -: lastUpdate: [timeStamp]
+}
+
+class "ipData" as zgw.nodeList.ipData  [[migration.html#zgw_json_zgw_nodeList_ipData]]{
+    type: object
+    .. Members ..
+    -: mDNSNodeName: [string]
+}
+
+class "pvsData" as zgw.nodeList.pvsData  [[migration.html#zgw_json_zgw_nodeList_pvsData]]{
+    type: object
+    .. Members ..
+    -: bootstrappingMode: [uint8]
+    -: provisioningStatus: [string (enum)]
+    -: requestedKeys: [uint8]
+}
+
+zgw -- zgw.zwNetworkData
+zgw.zwNetworkData -- zgw.zwNetworkData.zwSecurity
+zgw -- zgw.zipLanData
+zgw -- zgw.zgwTemporaryAssociationData
+zgw.zgwTemporaryAssociationData -- zgw.zgwTemporaryAssociationData.virtualNodeList
+zgw -- zgw.nodeList
+zgw.nodeList -- zgw.nodeList.nodeUID
+zgw.nodeList -- zgw.nodeList.zgwZWNodeData
+zgw.nodeList.zgwZWNodeData -- zgw.nodeList.zgwZWNodeData.nodeProdId
+zgw.nodeList.zgwZWNodeData -- zgw.nodeList.zgwZWNodeData.endpoints
+zgw.nodeList.zgwZWNodeData.endpoints -- zgw.nodeList.zgwZWNodeData.endpoints.endpointAggregation
+zgw.nodeList.zgwZWNodeData.endpoints -- zgw.nodeList.zgwZWNodeData.endpoints.endpointInfoFrames
+zgw.nodeList.zgwZWNodeData -- zgw.nodeList.zgwZWNodeData.probeState
+zgw.nodeList.zgwZWNodeData -- zgw.nodeList.zgwZWNodeData.zwNodeData
+zgw.nodeList.zgwZWNodeData -- zgw.nodeList.zgwZWNodeData.liveness
+zgw.nodeList -- zgw.nodeList.ipData
+zgw.nodeList -- zgw.nodeList.pvsData
+\enduml
+
+\subsection zgw_json_Definitions Definitions
+
+\subsubsection zgw_json_definitions_uint8 uint8
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>0</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>255</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_uint8_nonzero uint8_nonzero
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>1</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>255</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_uint16 uint16
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>0</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>65535</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_nodeId nodeId
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>1</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>4000</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_homeId homeId
+
+One Of:<ol>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Home ID as a hex number</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>minLength</td>
+    <td>10</td>
+  </tr>
+  <tr>
+    <td>maxLength</td>
+    <td>10</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^0[xX][0-9a-fA-F]{8}$\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Home ID as a decimal number</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>1</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>4294967295</td>
+  </tr>
+</table>
+
+</li>
+</ol>
+
+\subsubsection zgw_json_definitions_versionString versionString
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Major.minor.patch version string formatted like '2.05.21'</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^[0-9]{1,2}\.[0-9]{2}\.[0-9]{2}$\endcode</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_ipv6String ipv6String
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>IPv6 address.</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}$\endcode</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_keyString keyString
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Security key as a hex number</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^[0-9a-fA-F]{16,64}$\endcode</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_commandClassIdentifer commandClassIdentifer
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Command class identifier as a hex number. A long hex string will be interpreted as multiple command class identifiers, where each pair of hex digits is a separate identifier.</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^([0-9a-fA-F][0-9a-fA-F]){0,70}$\endcode</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_timeStamp timeStamp
+
+One Of:<ol>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>System timestamp represented as an integer (e.g., response of ContikiOS system call clock_seconds()). <br>Note: This representation is not recommended since it's based on the Linux system call clock_gettime(CLOCK_MONOTONIC_RAW), where the returned time is referenced to some arbitrary point in time.</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>object</td>
+  </tr>
+  <tr>
+    <td>properties</td>
+    <td>
+      <ul>
+        <li>timeZone</li>
+        <li>theSystemTimeStamp</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+\b timeZone
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+</table>
+
+
+\b theSystemTimeStamp
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>RFC 3339 date format, for example, 2018-11-13T20:20:39+00:00</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>format</td>
+    <td>date-time</td>
+  </tr>
+</table>
+
+
+
+</li>
+</ol>
+
+\subsubsection zgw_json_definitions_supportedCCsProperties supportedCCsProperties
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>List of all supported command classes and their version.</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>array</td>
+  </tr>
+  <tr>
+    <td>maxItems</td>
+    <td>35</td>
+  </tr>
+  <tr>
+    <td>items</td>
+    <td>
+      <ul>
+        <li>type</li>
+        <li>properties</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_DSKstring DSKstring
+
+One Of:<ol>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>DSK string as a hex number.</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^0[xX][0-9a-fA-F]{32}$\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>DSK string as a decimal number.</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^QR:[0-9]{5}\-[0-9]{5}\-[0-9]{5}\-[0-9]{5}\-[0-9]{5}\-[0-9]{5}\-[0-9]{5}\-[0-9]{5}$\endcode</td>
+  </tr>
+</table>
+
+</li>
+</ol>
+
+\subsubsection zgw_json_definitions_mDNSinfo mDNSinfo
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>object</td>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>mDNS information of a node that define the name and location. The name and location string MUST be encoded according to the Name field of the Z/IP Name and Location Command Class (SDS13782)</td>
+  </tr>
+  <tr>
+    <td>properties</td>
+    <td>
+      <ul>
+        <li>name</li>
+        <li>location</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+\b name
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>default</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Name of the device. This shows up in mDNS responses. If not specified, the gateway will autogenerate a service name.</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}(?=^[^\._]*[^\x00\._\-]$|^$)(?:^[\x00-\x7F]|[\xC2-\xDF][\x80-\xBF]|\xE0[\xA0-\xBF][\x80-\xBF]|[\xE1-\xEC\xEE\xEF][\x80-\xBF]{2}|\xED[\x80-\x9F][\x80-\xBF]|\xF0[\x90-\xBF][\x80-\xBF]{2}|[\xF1-\xF3][\x80-\xBF]{3}|\xF4[\x80-\x8F][\x80-\xBF]{2}$)*\endcode</td>
+  </tr>
+</table>
+
+
+\b location
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>default</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Location of the device, This shows up in mDNS responses. By default this is empty.</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}(?=^[^\._][^\-_]*[^\._]*[^\._]$|^[^\._]?$)(?:^[\x00-\x7F]|[\xC2-\xDF][\x80-\xBF]|\xE0[\xA0-\xBF][\x80-\xBF]|[\xE1-\xEC\xEE\xEF][\x80-\xBF]{2}|\xED[\x80-\x9F][\x80-\xBF]|\xF0[\x90-\xBF][\x80-\xBF]{2}|[\xF1-\xF3][\x80-\xBF]{3}|\xF4[\x80-\x8F][\x80-\xBF]{2}$)*\endcode</td>
+  </tr>
+</table>
+
+
+
+\subsubsection zgw_json_definitions_chipType chipType
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Z-Wave chip type (5: 500-series, 7: 700-series)</td>
+  </tr>
+  <tr>
+    <td>enum</td>
+    <td>
+      <ul>
+        <li>5</li>
+        <li>7</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_definitions_mode mode
+
+One Of:<ol>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Node is always listening to the network</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^MODE_ALWAYSLISTENING$\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Node is frequently listening to the network</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^MODE_FREQUENTLYLISTENING$\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Node is listening to the network only when neccessary</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^MODE_NONLISTENING$\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Node is listening to the network only when neccessary and uses GW as Mailbox. Never use this value if Mailbox feature is disabled in Z/IP Gateway.</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^MODE_MAILBOX$\endcode</td>
+  </tr>
+</table>
+
+</li>
+</ol>
+
+\subsubsection zgw_json_definitions_nodeType nodeType
+
+One Of:<ol>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}BASIC_TYPE_CONTROLLER\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}BASIC_TYPE_STATIC_CONTROLLER\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}BASIC_TYPE_SLAVE\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}BASIC_TYPE_ROUTING_SLAVE\endcode</td>
+  </tr>
+</table>
+
+</li>
+</ol>
+
+
+
+\subsection zgw_json_Objects Objects
+
+\subsubsection zgw_json_ZGWBackupInfo ZGWBackupInfo
+
+\paragraph zgw_json_ZGWBackupInfo_desc Description
+
+Information about the origin of this Z/IP gateway backup file.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_ZGWBackupInfo_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_ZGWBackupInfo_versionMajor "versionMajor"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_ZGWBackupInfo_versionMinor "versionMinor"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_ZGWBackupInfo_sourceZGWVersion "sourceZGWVersion"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_ZGWBackupInfo_sourceProtocolVersion "sourceProtocolVersion"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_ZGWBackupInfo_sourceChipType "sourceChipType"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_ZGWBackupInfo_timestamp "timestamp"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_ZGWBackupInfo_versionMajor ZGWBackupInfo/versionMajor
+
+\paragraph zgw_json_ZGWBackupInfo_versionMajor_desc Description
+
+Major version of this backup file format.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>integer</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_ZGWBackupInfo_versionMinor ZGWBackupInfo/versionMinor
+
+\paragraph zgw_json_ZGWBackupInfo_versionMinor_desc Description
+
+Minor version of this backup file format.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>integer</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_ZGWBackupInfo_sourceZGWVersion ZGWBackupInfo/sourceZGWVersion
+
+\paragraph zgw_json_ZGWBackupInfo_sourceZGWVersion_desc Description
+
+Z/IP gateway version from which this backup originates.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_versionString "versionString"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_ZGWBackupInfo_sourceProtocolVersion ZGWBackupInfo/sourceProtocolVersion
+
+\paragraph zgw_json_ZGWBackupInfo_sourceProtocolVersion_desc Description
+
+Protocol version which was running on the Z-Wave controller chip when this backup was generated.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_versionString "versionString"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_ZGWBackupInfo_sourceChipType ZGWBackupInfo/sourceChipType
+
+\paragraph zgw_json_ZGWBackupInfo_sourceChipType_desc Description
+
+Z-Wave controller chip type used with the Z/IP gateway when this backup was generated.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_chipType "chipType"</td>
+    <td>False</td>
+    <td>5</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_ZGWBackupInfo_timestamp ZGWBackupInfo/timestamp
+
+\paragraph zgw_json_ZGWBackupInfo_timestamp_desc Description
+
+Date and time, when this file was generated.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_timeStamp "timeStamp"</td>
+    <td>False</td>
+    <td>0</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw zgw
+
+\paragraph zgw_json_zgw_desc Description
+
+Gateway backup data specific to the gateway software.<br>Note that the IP address prefix of the gateway, unsolicited destination IP addresses & port number, and the MailBox Configuration settings should be provided in the 'zipgateway.cfg' configuration file.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData "zwNetworkData"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zipLanData "zipLanData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zgwTemporaryAssociationData "zgwTemporaryAssociationData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList "nodeList"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_zwNetworkData zgw/zwNetworkData
+
+\paragraph zgw_json_zgw_zwNetworkData_desc Description
+
+Granted security keys of the gateway.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_zwNetworkData_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity "zwSecurity"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity zgw/zwNetworkData/zwSecurity
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity_S0key "S0key"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity_S2UnauthenticatedKey "S2UnauthenticatedKey"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity_S2AuthenticatedKey "S2AuthenticatedKey"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity_S2AccessKey "S2AccessKey"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity_S2AuthenticatedKeyLR "S2AuthenticatedKeyLR"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity_S2AccessKeyLR "S2AccessKeyLR"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zwNetworkData_zwSecurity_ECDHPrivateKey "ECDHPrivateKey"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity_S0key zgw/zwNetworkData/zwSecurity/S0key
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_S0key_desc Description
+
+The S0 network key. To use this key, the grantedKeys for the gateway itself must have bit 0 set, otherwise the gateway overwrites the key if it is SIS or becomes SIS.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_keyString "keyString"</td>
+    <td>False</td>
+    <td>00000000000000000000000000000000</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity_S2UnauthenticatedKey zgw/zwNetworkData/zwSecurity/S2UnauthenticatedKey
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_S2UnauthenticatedKey_desc Description
+
+The S2 Unauthenticated network key. To use this key, the grantedKeys for the gateway itself must have bit 4 set, otherwise the gateway overwrites the key if it is SIS or becomes SIS.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_keyString "keyString"</td>
+    <td>False</td>
+    <td>00000000000000000000000000000000</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity_S2AuthenticatedKey zgw/zwNetworkData/zwSecurity/S2AuthenticatedKey
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_S2AuthenticatedKey_desc Description
+
+The S2 Authenticated network key. To use this key, the grantedKeys for the gateway itself must have bit 5 set, otherwise the gateway overwrites the key if it is SIS or becomes SIS.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_keyString "keyString"</td>
+    <td>False</td>
+    <td>00000000000000000000000000000000</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity_S2AccessKey zgw/zwNetworkData/zwSecurity/S2AccessKey
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_S2AccessKey_desc Description
+
+The S2 Access network key. To use this key, the grantedKeys for the gateway itself must have bit 6 set, otherwise the gateway overwrites the key if it is SIS or becomes SIS.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_keyString "keyString"</td>
+    <td>False</td>
+    <td>00000000000000000000000000000000</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity_S2AuthenticatedKeyLR zgw/zwNetworkData/zwSecurity/S2AuthenticatedKeyLR
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_S2AuthenticatedKeyLR_desc Description
+
+The S2 Authenticated Long Range network key. To use this key, the grantedKeys for the gateway itself must have bit 5 set, otherwise the gateway overwrites the key if it is SIS or becomes SIS.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_keyString "keyString"</td>
+    <td>False</td>
+    <td>00000000000000000000000000000000</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity_S2AccessKeyLR zgw/zwNetworkData/zwSecurity/S2AccessKeyLR
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_S2AccessKeyLR_desc Description
+
+The S2 Access network Long Range key. To use this key, the grantedKeys for the gateway itself must have bit 6 set, otherwise the gateway overwrites the key if it is SIS or becomes SIS.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_keyString "keyString"</td>
+    <td>False</td>
+    <td>00000000000000000000000000000000</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zwNetworkData_zwSecurity_ECDHPrivateKey zgw/zwNetworkData/zwSecurity/ECDHPrivateKey
+
+\paragraph zgw_json_zgw_zwNetworkData_zwSecurity_ECDHPrivateKey_desc Description
+
+The private part of the elliptic curve key used in S2 inclusions, which the gateway will use if no key is available in the NVR of the module. Any true random number here will do.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_keyString "keyString"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zipLanData zgw/zipLanData
+
+\paragraph zgw_json_zgw_zipLanData_desc Description
+
+LAN information of the gateway such as MAC addresses.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_zipLanData_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zipLanData_macAddress "macAddress"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_zipLanData_macAddress zgw/zipLanData/macAddress
+
+\paragraph zgw_json_zgw_zipLanData_macAddress_desc Description
+
+The MAC address which the gateway uses on the LAN side. If not provided the gateway will autogenerate a new MAC address.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string</td>
+    <td>False</td>
+    <td>00:00:00:00:00:00</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_zgwTemporaryAssociationData zgw/zgwTemporaryAssociationData
+
+\paragraph zgw_json_zgw_zgwTemporaryAssociationData_desc Description
+
+Temporary association data of the gateway.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_zgwTemporaryAssociationData_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_zgwTemporaryAssociationData_virtualNodeList "virtualNodeList"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_zgwTemporaryAssociationData_virtualNodeList zgw/zgwTemporaryAssociationData/virtualNodeList
+
+\paragraph zgw_json_zgw_zgwTemporaryAssociationData_virtualNodeList_desc Description
+
+If omitted or fewer than MAX_TEMP_ASSOCIATIONS (default: 4) nodeIDs are listed, the gateway will create the remaining virtual nodes when starting up.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [integer]</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList zgw/nodeList
+
+\paragraph zgw_json_zgw_nodeList_desc Description
+
+List of all Z-Wave nodes in the network.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [object]</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_nodeUID "nodeUID"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_isZGW "isZGW"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData "zgwZWNodeData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_ipData "ipData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_pvsData "pvsData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_nodeUID zgw/nodeList/nodeUID
+
+\paragraph zgw_json_zgw_nodeList_nodeUID_desc Description
+
+A unique node identifier for the node. It can be either a DSK or a Network ID (i.e. Z-Wave home id and node id).
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_nodeUID_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_nodeUID_uidType "uidType"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_nodeUID_DSK "DSK"</td>
+    <td>True</td>
+    <td>uidType == OrderedDict([('const', 'DSK')])</td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_nodeUID_nodeId "nodeId"</td>
+    <td>True</td>
+    <td>NOT (uidType == OrderedDict([('const', 'DSK')]))</td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_nodeUID_homeId "homeId"</td>
+    <td>True</td>
+    <td>NOT (uidType == OrderedDict([('const', 'DSK')]))</td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_nodeUID_uidType zgw/nodeList/nodeUID/uidType
+
+\paragraph zgw_json_zgw_nodeList_nodeUID_uidType_desc Description
+
+Indicate the type of the node identifier.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string (enum)</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_nodeUID_uidType_enum Enum values
+<ol>
+  <li>ZW Net ID</li>  <li>DSK</li></ol>
+
+\subsubsection zgw_json_zgw_nodeList_nodeUID_DSK zgw/nodeList/nodeUID/DSK
+
+\paragraph zgw_json_zgw_nodeList_nodeUID_DSK_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_DSKstring "DSKstring"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_nodeUID_nodeId zgw/nodeList/nodeUID/nodeId
+
+\paragraph zgw_json_zgw_nodeList_nodeUID_nodeId_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_nodeId "nodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_nodeUID_homeId zgw/nodeList/nodeUID/homeId
+
+\paragraph zgw_json_zgw_nodeList_nodeUID_homeId_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_homeId "homeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_isZGW zgw/nodeList/isZGW
+
+\paragraph zgw_json_zgw_nodeList_isZGW_desc Description
+
+Used in offline import mode to identify the node id of the gateway. Note that this field is mandatory for offline import mode.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>boolean</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData zgw/nodeList/zgwZWNodeData
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_desc Description
+
+Information about the node. This is information beyond network protocol information.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_grantedKeys "grantedKeys"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId "nodeProdId"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints "endpoints"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_probeState "probeState"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData "zwNodeData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_liveness "liveness"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_mode "mode"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_nodeType "nodeType"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_grantedKeys zgw/nodeList/zgwZWNodeData/grantedKeys
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_grantedKeys_desc Description
+
+The bitmask of the keys that are assigned to the node.<br> Set bit 0 if the node is granted S0.<br> Set bit 4 if the node is granted S2_UNAUTHENTICATED.<br> Set bit 5 if the node is granted S2_AUTHENTICATED.<br> Set bit 6 if the node is granted S2_ACCESS.<br> All other bits must set to 0.<br> If not specified it's assumed that no keys are assigned to the node.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td>0</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId zgw/nodeList/zgwZWNodeData/nodeProdId
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_desc Description
+
+Manufacturer specific properties of the node.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_manufacturerId "manufacturerId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_productType "productType"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_productId "productId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_manufacturerId zgw/nodeList/zgwZWNodeData/nodeProdId/manufacturerId
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_manufacturerId_desc Description
+
+Manufacturer ID as a decimal number.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint16 "uint16"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_productType zgw/nodeList/zgwZWNodeData/nodeProdId/productType
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_productType_desc Description
+
+Product Type ID as a decimal number.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint16 "uint16"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_productId zgw/nodeList/zgwZWNodeData/nodeProdId/productId
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_nodeProdId_productId_desc Description
+
+Product ID as a decimal number.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint16 "uint16"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints zgw/nodeList/zgwZWNodeData/endpoints
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_desc Description
+
+Array of endpoints. The root device (node) is always endpointId=0.<br> Note that if the node has N endpoints, the length of this endpoint list must be N (including the root device).
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [object]</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointId "endpointId"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_installerIcon "installerIcon"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_userIcon "userIcon"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointAggregation "endpointAggregation"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames "endpointInfoFrames"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_epMDNSData "epMDNSData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointId zgw/nodeList/zgwZWNodeData/endpoints/endpointId
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointId_desc Description
+
+Endpoint identifier. A sequential increasing number for each endpoint. The root device (node) is always endpointId=0. If this is an aggregated endpoint (see property endpointAggregation) its ID must be larger than all non-aggregated endpoints.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_installerIcon zgw/nodeList/zgwZWNodeData/endpoints/installerIcon
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_installerIcon_desc Description
+
+Code of the Z-Wave+ installer icon.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint16 "uint16"</td>
+    <td>False</td>
+    <td>0</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_userIcon zgw/nodeList/zgwZWNodeData/endpoints/userIcon
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_userIcon_desc Description
+
+Code of the Z-Wave+ installer icon.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint16 "uint16"</td>
+    <td>False</td>
+    <td>0</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointAggregation zgw/nodeList/zgwZWNodeData/endpoints/endpointAggregation
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointAggregation_desc Description
+
+If this field is defined this endpoint is interpreted as an aggregation of the non-aggregated endpoints listed here.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [\ref zgw_json_definitions_uint8 "uint8"]</td>
+    <td>False</td>
+    <td>[]</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames zgw/nodeList/zgwZWNodeData/endpoints/endpointInfoFrames
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_desc Description
+
+Command classes (CCs) that are supported by the endpoint.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_nonSecureNIF "nonSecureNIF"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_secureNIF "secureNIF"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_nonSecureNIF zgw/nodeList/zgwZWNodeData/endpoints/endpointInfoFrames/nonSecureNIF
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_nonSecureNIF_desc Description
+
+All non-securely supported CC identifiers represented as a string of two-digit hex numbers (no spaces between numbers), and the first two bytes (four-digit hex numbers) must contain the Generic and Specific Device Classes of the endpoint
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_commandClassIdentifer "commandClassIdentifer"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_secureNIF zgw/nodeList/zgwZWNodeData/endpoints/endpointInfoFrames/secureNIF
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_endpointInfoFrames_secureNIF_desc Description
+
+All securely supported CC identifiers represented as a string of two-digit hex numbers (no spaces between numbers)
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_commandClassIdentifer "commandClassIdentifer"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_epMDNSData zgw/nodeList/zgwZWNodeData/endpoints/epMDNSData
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_endpoints_epMDNSData_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_mDNSinfo "mDNSinfo"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_probeState zgw/nodeList/zgwZWNodeData/probeState
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_probeState_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_probeState_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_probeState_state "state"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_probeState_versionCap "versionCap"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_probeState_ZWplusRoleType "ZWplusRoleType"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_probeState_ccVersions "ccVersions"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_probeState_state zgw/nodeList/zgwZWNodeData/probeState/state
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_probeState_state_desc Description
+
+Probing state of the node.<br>If set to 'DONE', the gateway will not probe the node and all information for the node must be provided in this file. Otherwise the gateway may use incomplete node information.<br> If not all information about a node is available, set this field to 'RE-INTERVIEW' to have the gateway collect the data by re-probing the node.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string (enum)</td>
+    <td>False</td>
+    <td>RE-INTERVIEW</td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_probeState_state_enum Enum values
+<ol>
+  <li>RE-INTERVIEW</li>  <li>DONE</li></ol>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_probeState_versionCap zgw/nodeList/zgwZWNodeData/probeState/versionCap
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_probeState_versionCap_desc Description
+
+Should contain the v3 version capabilities report frame content.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string</td>
+    <td>False</td>
+    <td>0x00</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_probeState_ZWplusRoleType zgw/nodeList/zgwZWNodeData/probeState/ZWplusRoleType
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_probeState_ZWplusRoleType_desc Description
+
+If the node role type is portable slave the field must set to 'portableSlave'.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_probeState_ccVersions zgw/nodeList/zgwZWNodeData/probeState/ccVersions
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_probeState_ccVersions_desc Description
+
+Versions of the command classes that the gateway controls and the node supports. E.g. VERSION, ZWAVE_PLUS_INFO, ...
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_supportedCCsProperties "supportedCCsProperties"</td>
+    <td>False</td>
+    <td>[OrderedDict([('commandClassId', 134), ('version', 0)]), OrderedDict([('commandClassId', 94), ('version', 0)]), OrderedDict([('commandClassId', 114), ('version', 0)]), OrderedDict([('commandClassId', 132), ('version', 0)]), OrderedDict([('commandClassId', 96), ('version', 0)]), OrderedDict([('commandClassId', 133), ('version', 0)]), OrderedDict([('commandClassId', 142), ('version', 0)])]</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData zgw/nodeList/zgwZWNodeData/zwNodeData
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData_desc Description
+
+The node id of the node. Required if a DSK has been used as nodeUID.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData_nodeId "nodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData_nodeId zgw/nodeList/zgwZWNodeData/zwNodeData/nodeId
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_zwNodeData_nodeId_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_nodeId "nodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_liveness zgw/nodeList/zgwZWNodeData/liveness
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_liveness_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_liveness_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_liveness_livenessState "livenessState"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_liveness_wakeUpInterval "wakeUpInterval"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_liveness_lastAwake "lastAwake"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_zgwZWNodeData_liveness_lastUpdate "lastUpdate"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_liveness_livenessState zgw/nodeList/zgwZWNodeData/liveness/livenessState
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_liveness_livenessState_desc Description
+
+Liveness of the node; if the node has been heard within the configured time period, this field must be set to 'OK'. If the controller was not able to contact the node, the field must set to 'FAILING'.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string (enum)</td>
+    <td>False</td>
+    <td>OK</td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_liveness_livenessState_enum Enum values
+<ol>
+  <li>OK</li>  <li>FAILING</li></ol>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_liveness_wakeUpInterval zgw/nodeList/zgwZWNodeData/liveness/wakeUpInterval
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_liveness_wakeUpInterval_desc Description
+
+Node wake-up interval in seconds. Mandatory for sleeping nodes to avoid probing. If mailbox is disabled, the wake-up interval must be provided 
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>integer</td>
+    <td>False</td>
+    <td>4200</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_liveness_lastAwake zgw/nodeList/zgwZWNodeData/liveness/lastAwake
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_liveness_lastAwake_desc Description
+
+Timestamp of the last received frame from the node.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_timeStamp "timeStamp"</td>
+    <td>False</td>
+    <td>0</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_liveness_lastUpdate zgw/nodeList/zgwZWNodeData/liveness/lastUpdate
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_liveness_lastUpdate_desc Description
+
+Timestamp for the last successful probe by the controller.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_timeStamp "timeStamp"</td>
+    <td>False</td>
+    <td>0</td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_mode zgw/nodeList/zgwZWNodeData/mode
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_mode_desc Description
+
+Mode field for indicating ALWAYSLISTENING, NONLISTENING, FREQUENTLYLISTENING, and MAILBOX. Note that this field is mandatory unless re-interview is probe state is RE-INTERVIEW
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_mode "mode"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_zgwZWNodeData_nodeType zgw/nodeList/zgwZWNodeData/nodeType
+
+\paragraph zgw_json_zgw_nodeList_zgwZWNodeData_nodeType_desc Description
+
+Identifier for basic device class. Note that this field is mandatory for offline import mode.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_nodeType "nodeType"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_ipData zgw/nodeList/ipData
+
+\paragraph zgw_json_zgw_nodeList_ipData_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_ipData_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_ipData_mDNSNodeName "mDNSNodeName"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_ipData_mDNSNodeName zgw/nodeList/ipData/mDNSNodeName
+
+\paragraph zgw_json_zgw_nodeList_ipData_mDNSNodeName_desc Description
+
+The mDNS host name of the node will be [mDNSNodeName].local. This will be generated by the gateway if not set.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_pvsData zgw/nodeList/pvsData
+
+\paragraph zgw_json_zgw_nodeList_pvsData_desc Description
+
+Node provisioning data.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_pvsData_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_pvsData_bootstrappingMode "bootstrappingMode"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_pvsData_provisioningStatus "provisioningStatus"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_zgw_nodeList_pvsData_requestedKeys "requestedKeys"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zgw_json_zgw_nodeList_pvsData_bootstrappingMode zgw/nodeList/pvsData/bootstrappingMode
+
+\paragraph zgw_json_zgw_nodeList_pvsData_bootstrappingMode_desc Description
+
+If the node is included using SmartStart, this field must set to 1
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zgw_json_zgw_nodeList_pvsData_provisioningStatus zgw/nodeList/pvsData/provisioningStatus
+
+\paragraph zgw_json_zgw_nodeList_pvsData_provisioningStatus_desc Description
+
+Provisioning status of the node:<br> 'INCLUDED': node is in the provisioning list,<br>'PENDING': inclusion is pending,<br>'DISABLED': the inclusion request is not accepted and the user must edit the PL,<br>'IGNORED': the inclusion request is not accepted and user action is needed to un-ignore the device.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string (enum)</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zgw_json_zgw_nodeList_pvsData_provisioningStatus_enum Enum values
+<ol>
+  <li>INCLUDED</li>  <li>PENDING</li>  <li>DISABLED</li>  <li>IGNORED</li></ol>
+
+\subsubsection zgw_json_zgw_nodeList_pvsData_requestedKeys zgw/nodeList/pvsData/requestedKeys
+
+\paragraph zgw_json_zgw_nodeList_pvsData_requestedKeys_desc Description
+
+The bitmask of the keys that are requested via the node, 7th bit= 1 if the node is requested S0, 0 bit = 1 if the node is requested  S2_UNAUTHENTICATED, 1 bit=1 if the node is requested  S2_AUTHENTICATED, 2nd bit=1 if the node is requested S2_ACCESS, and other bits must set to 0.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zgw_json_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+
+
+
+
+\section zw_controller_json_schema Z-Wave Controller NVM Data file
+
+When migrating to a Z/IP Gateway or performing a backup/restore of a Z/IP
+Gateway or replacing a Z-Wave controller, the content of the Z-Wave controller
+NVM storage must be migrated too. During this process the NVM content is
+extracted with \c zw_programmer (see \ref migration_running_zw_programmer) and
+converted to a JSON file with \c zw_nvm_converter (see \ref
+migration_running_zw_nvm_converter). The content of the controller NVM JSON file
+should normally not be modified by hand.
+
+The JSON schema of the controller NVM JSON file is available in the file \c
+systools/doc/zw_controller.schema.json.
+
+This section documents the JSON schema defining the structure of the Z-Wave
+controller NVM JSON file. 
+
+\startuml
+hide circle
+skinparam classAttributeIconSize 0
+class "backupInfo" [[migration.html#zw_controller_backupInfo]]{
+    type: object
+    .. Members ..
+    +: backupFormatVersion: [integer]
+    +: sourceProtocolVersion: [versionString]
+    +: sourceAppVersion: [versionString]
+    -: date: [string]
+}
+
+class "zwController" [[migration.html#zw_controller_zwController]]{
+    type: object
+    .. Members ..
+    +: ownHomeId: [homeId]
+    +: learnedHomeId: [homeId]
+    +: nodeId: [nodeId]
+    +: lastUsedNodeId: [nodeId]
+    +: staticControllerNodeId: [nodeId]
+    +: controllerConfiguration: [uint8]
+    -: systemState: [integer]
+    +: cmdClassList: [array [uint8]]
+    +: nodeTable: [array [object]]
+    +: sucState: [object]
+    -: applicationData: [string]
+}
+
+class "cmdClassList" as zwController.cmdClassList  [[migration.html#zw_controller_zwController_cmdClassList]]{
+    type: array [uint8]
+    .. Members ..
+}
+
+class "nodeTable" as zwController.nodeTable  [[migration.html#zw_controller_zwController_nodeTable]]{
+    type: array [object]
+    .. Members ..
+    -: nodeId: [nodeId]
+    -: virtualNode: [boolean]
+    -: pendingUpdate: [boolean]
+    -: pendingDiscovery: [boolean]
+    -: controllerSucUpdateIndex: [uint8]
+    -: neighbours: [array [nodeId]]
+    -: nodeInfo: [object]
+    -: routeCache: [object]
+}
+
+class "neighbours" as zwController.nodeTable.neighbours  [[migration.html#zw_controller_zwController_nodeTable_neighbours]]{
+    type: array [nodeId]
+    .. Members ..
+}
+
+class "nodeInfo" as zwController.nodeTable.nodeInfo  [[migration.html#zw_controller_zwController_nodeTable_nodeInfo]]{
+    type: object
+    .. Members ..
+    -: capability: [uint8]
+    -: security: [uint8]
+    -: reserved: [uint8]
+    -: generic: [uint8]
+    -: specific: [uint8]
+}
+
+class "routeCache" as zwController.nodeTable.routeCache  [[migration.html#zw_controller_zwController_nodeTable_routeCache]]{
+    type: object
+    .. Members ..
+    -: appLock: [boolean]
+    -: routeSlaveSuc: [boolean]
+    -: LWR: [routeCacheLine]
+    -: NLWR: [routeCacheLine]
+}
+
+class "sucState" as zwController.sucState  [[migration.html#zw_controller_zwController_sucState]]{
+    type: object
+    .. Members ..
+    -: lastIndex: [uint8]
+    -: updateNodeList: [array [object]]
+}
+
+class "updateNodeList" as zwController.sucState.updateNodeList  [[migration.html#zw_controller_zwController_sucState_updateNodeList]]{
+    type: array [object]
+    .. Members ..
+    -: nodeId: [nodeId]
+    -: changeType: [integer]
+    -: nodeInfo: [array [uint8]]
+}
+
+class "nodeInfo" as zwController.sucState.updateNodeList.nodeInfo  [[migration.html#zw_controller_zwController_sucState_updateNodeList_nodeInfo]]{
+    type: array [uint8]
+    .. Members ..
+}
+
+zwController -- zwController.cmdClassList
+zwController -- zwController.nodeTable
+zwController.nodeTable -- zwController.nodeTable.neighbours
+zwController.nodeTable -- zwController.nodeTable.nodeInfo
+zwController.nodeTable -- zwController.nodeTable.routeCache
+zwController -- zwController.sucState
+zwController.sucState -- zwController.sucState.updateNodeList
+zwController.sucState.updateNodeList -- zwController.sucState.updateNodeList.nodeInfo
+class "appConfig" [[migration.html#zw_controller_appConfig]]{
+    type: None
+    .. Members ..
+}
+
+\enduml
+
+\subsection zw_controller_Definitions Definitions
+
+\subsubsection zw_controller_definitions_uint8 uint8
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>0</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>255</td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_definitions_uint8_nonzero uint8_nonzero
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>1</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>255</td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_definitions_nodeId nodeId
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>0</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>232</td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_definitions_homeId homeId
+
+One Of:<ol>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>comment</td>
+    <td>Home ID as a hex number</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>minLength</td>
+    <td>10</td>
+  </tr>
+  <tr>
+    <td>maxLength</td>
+    <td>10</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^0[xX][0-9a-fA-F]{8}$\endcode</td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>comment</td>
+    <td>Home ID as a decimal number</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>integer</td>
+  </tr>
+  <tr>
+    <td>minimum</td>
+    <td>1</td>
+  </tr>
+  <tr>
+    <td>maximum</td>
+    <td>4294967295</td>
+  </tr>
+</table>
+
+</li>
+</ol>
+
+\subsubsection zw_controller_definitions_versionString versionString
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>string</td>
+  </tr>
+  <tr>
+    <td>pattern</td>
+    <td>\code{.unparsed}^[0-9]{1,2}\.[0-9]{2}\.[0-9]{2}$\endcode</td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_definitions_powerLevel powerLevel
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>array</td>
+  </tr>
+  <tr>
+    <td>minItems</td>
+    <td>3</td>
+  </tr>
+  <tr>
+    <td>maxItems</td>
+    <td>3</td>
+  </tr>
+  <tr>
+    <td>items</td>
+    <td>
+      <ul>
+        <li>\ref zw_controller_definitions_uint8 "uint8"</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_definitions_routeCacheLine routeCacheLine
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>object</td>
+  </tr>
+  <tr>
+    <td>properties</td>
+    <td>
+      <ul>
+        <li>routecacheLineConf</li>
+        <li>repeaters</li>
+      </ul>
+      </td>
+  </tr>
+  <tr>
+    <td>required</td>
+    <td>
+      <ul>
+        <li>routecacheLineConf</li>
+        <li>repeaters</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+\b routecacheLineConf
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Bits 0-2 speed: 9600 (0x01), 40K (0x02), 100K (0x03), 200K (0x04). Bits 3-7 options bitflags: LOW_POWER (0x08), LONG_PREAMBLE (0x10), SEND_BEAM_250MS (0x20), SEND_BEAM_1000MS (0x40), BROADCAST_HOMEID (0x80)</td>
+  </tr>
+  <tr>
+    <td>$ref</td>
+    <td>#/definitions/uint8</td>
+  </tr>
+</table>
+
+
+\b repeaters
+
+One Of:<ol>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Repeater nodes</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>array</td>
+  </tr>
+  <tr>
+    <td>maxItems</td>
+    <td>4</td>
+  </tr>
+  <tr>
+    <td>items</td>
+    <td>
+      <ul>
+        <li>\ref zw_controller_definitions_nodeId "nodeId"</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+
+</li>
+<li>
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>description</td>
+    <td>Direct route indicated by first item being CACHED_ROUTE_LINE_DIRECT (0xFE)</td>
+  </tr>
+  <tr>
+    <td>type</td>
+    <td>array</td>
+  </tr>
+  <tr>
+    <td>maxItems</td>
+    <td>4</td>
+  </tr>
+  <tr>
+    <td>items</td>
+    <td>
+      <ul>
+        <li>OrderedDict([('const', 254)])</li>
+      </ul>
+      </td>
+  </tr>
+  <tr>
+    <td>additionalItems</td>
+    <td>
+      <ul>
+        <li>const</li>
+      </ul>
+      </td>
+  </tr>
+</table>
+
+</li>
+</ol>
+
+
+
+
+
+\subsection zw_controller_Objects Objects
+
+\subsubsection zw_controller_backupInfo backupInfo
+
+\paragraph zw_controller_backupInfo_desc Description
+
+The Controller backup file information
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zw_controller_backupInfo_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_backupInfo_backupFormatVersion "backupFormatVersion"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_backupInfo_sourceProtocolVersion "sourceProtocolVersion"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_backupInfo_sourceAppVersion "sourceAppVersion"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_backupInfo_date "date"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zw_controller_backupInfo_backupFormatVersion backupInfo/backupFormatVersion
+
+\paragraph zw_controller_backupInfo_backupFormatVersion_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>integer</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_backupInfo_sourceProtocolVersion backupInfo/sourceProtocolVersion
+
+\paragraph zw_controller_backupInfo_sourceProtocolVersion_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_versionString "versionString"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_backupInfo_sourceAppVersion backupInfo/sourceAppVersion
+
+\paragraph zw_controller_backupInfo_sourceAppVersion_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_versionString "versionString"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_backupInfo_date backupInfo/date
+
+\paragraph zw_controller_backupInfo_date_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController zwController
+
+\paragraph zw_controller_zwController_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zw_controller_zwController_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_ownHomeId "ownHomeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_learnedHomeId "learnedHomeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeId "nodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_lastUsedNodeId "lastUsedNodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_staticControllerNodeId "staticControllerNodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_controllerConfiguration "controllerConfiguration"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_systemState "systemState"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_cmdClassList "cmdClassList"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable "nodeTable"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_sucState "sucState"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_applicationData "applicationData"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zw_controller_zwController_ownHomeId zwController/ownHomeId
+
+\paragraph zw_controller_zwController_ownHomeId_desc Description
+
+The network id to use if this is the primary controller (in this case the flag CONTROLLER_ON_OTHER_NETWORK (0x02) in controllerConfiguration IS NOT set). For a pre 700-series secondary controller, this will contain the original home id of the controller before it was included as a secondary controller in another network. For a 700-series controller ownHomeId and learnedHomeId will be identical.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_homeId "homeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_learnedHomeId zwController/learnedHomeId
+
+\paragraph zw_controller_zwController_learnedHomeId_desc Description
+
+The network id to use if this is NOT the primary controller (in this case the flag CONTROLLER_ON_OTHER_NETWORK (0x02) in controllerConfiguration IS set). For a 700-series controller ownHomeId and learnedHomeId will be identical.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_homeId "homeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeId zwController/nodeId
+
+\paragraph zw_controller_zwController_nodeId_desc Description
+
+The controller node id if this is NOT the primary controller. A primary controller will always be configured as node id 1 (in which case this value will be ignored).
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_nodeId "nodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_lastUsedNodeId zwController/lastUsedNodeId
+
+\paragraph zw_controller_zwController_lastUsedNodeId_desc Description
+
+The most recently used node id. Controls what id to allocate next when adding new nodes.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_nodeId "nodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_staticControllerNodeId zwController/staticControllerNodeId
+
+\paragraph zw_controller_zwController_staticControllerNodeId_desc Description
+
+...
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_nodeId "nodeId"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_controllerConfiguration zwController/controllerConfiguration
+
+\paragraph zw_controller_zwController_controllerConfiguration_desc Description
+
+bitflags: CONTROLLER_IS_SECONDARY (0x01), CONTROLLER_ON_OTHER_NETWORK (0x02), CONTROLLER_NODEID_SERVER_PRESENT (0x04), CONTROLLER_IS_REAL_PRIMARY (0x08), CONTROLLER_IS_SUC (0x10), NO_NODES_INCUDED (0x20)
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_systemState zwController/systemState
+
+\paragraph zw_controller_zwController_systemState_desc Description
+
+Smart Start state. Defaults to Idle (0) if missing.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>integer</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_cmdClassList zwController/cmdClassList
+
+\paragraph zw_controller_zwController_cmdClassList_desc Description
+
+NIF: UnSecureIncludedCC
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [\ref zw_controller_definitions_uint8 "uint8"]</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable zwController/nodeTable
+
+\paragraph zw_controller_zwController_nodeTable_desc Description
+
+The node table defines all nodes in the network
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [object]</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zw_controller_zwController_nodeTable_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_nodeId "nodeId"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_virtualNode "virtualNode"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_pendingUpdate "pendingUpdate"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_pendingDiscovery "pendingDiscovery"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_controllerSucUpdateIndex "controllerSucUpdateIndex"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_neighbours "neighbours"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_nodeInfo "nodeInfo"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_routeCache "routeCache"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zw_controller_zwController_nodeTable_nodeId zwController/nodeTable/nodeId
+
+\paragraph zw_controller_zwController_nodeTable_nodeId_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_nodeId "nodeId"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_virtualNode zwController/nodeTable/virtualNode
+
+\paragraph zw_controller_zwController_nodeTable_virtualNode_desc Description
+
+true if this is a virtual node. Defaults to false if missing.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>boolean</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_pendingUpdate zwController/nodeTable/pendingUpdate
+
+\paragraph zw_controller_zwController_nodeTable_pendingUpdate_desc Description
+
+true if the node information needs to be sent to the SUC. Defaults to false if missing.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>boolean</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_pendingDiscovery zwController/nodeTable/pendingDiscovery
+
+\paragraph zw_controller_zwController_nodeTable_pendingDiscovery_desc Description
+
+true if the node range info needs to be updated. Defaults to false if missing.
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>boolean</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_controllerSucUpdateIndex zwController/nodeTable/controllerSucUpdateIndex
+
+\paragraph zw_controller_zwController_nodeTable_controllerSucUpdateIndex_desc Description
+
+Last SUC update index (1-64). If this node is not SUC then either 255 (SUC_OUT_OF_DATE) or 0
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_neighbours zwController/nodeTable/neighbours
+
+\paragraph zw_controller_zwController_nodeTable_neighbours_desc Description
+
+The nodes neigbours
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [\ref zw_controller_definitions_nodeId "nodeId"]</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_nodeInfo zwController/nodeTable/nodeInfo
+
+\paragraph zw_controller_zwController_nodeTable_nodeInfo_desc Description
+
+Information obtained from the nodes info frame
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zw_controller_zwController_nodeTable_nodeInfo_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_nodeInfo_capability "capability"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_nodeInfo_security "security"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_nodeInfo_reserved "reserved"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_nodeInfo_generic "generic"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_nodeInfo_specific "specific"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zw_controller_zwController_nodeTable_nodeInfo_capability zwController/nodeTable/nodeInfo/capability
+
+\paragraph zw_controller_zwController_nodeTable_nodeInfo_capability_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_nodeInfo_security zwController/nodeTable/nodeInfo/security
+
+\paragraph zw_controller_zwController_nodeTable_nodeInfo_security_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_nodeInfo_reserved zwController/nodeTable/nodeInfo/reserved
+
+\paragraph zw_controller_zwController_nodeTable_nodeInfo_reserved_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_nodeInfo_generic zwController/nodeTable/nodeInfo/generic
+
+\paragraph zw_controller_zwController_nodeTable_nodeInfo_generic_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_nodeInfo_specific zwController/nodeTable/nodeInfo/specific
+
+\paragraph zw_controller_zwController_nodeTable_nodeInfo_specific_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_routeCache zwController/nodeTable/routeCache
+
+\paragraph zw_controller_zwController_nodeTable_routeCache_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zw_controller_zwController_nodeTable_routeCache_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_routeCache_appLock "appLock"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_routeCache_routeSlaveSuc "routeSlaveSuc"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_routeCache_LWR "LWR"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_nodeTable_routeCache_NLWR "NLWR"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zw_controller_zwController_nodeTable_routeCache_appLock zwController/nodeTable/routeCache/appLock
+
+\paragraph zw_controller_zwController_nodeTable_routeCache_appLock_desc Description
+
+true if application controlled static route exist
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>boolean</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_routeCache_routeSlaveSuc zwController/nodeTable/routeCache/routeSlaveSuc
+
+\paragraph zw_controller_zwController_nodeTable_routeCache_routeSlaveSuc_desc Description
+
+true if this (routing slave) node needs a network update
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>boolean</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_routeCache_LWR zwController/nodeTable/routeCache/LWR
+
+\paragraph zw_controller_zwController_nodeTable_routeCache_LWR_desc Description
+
+Last working route
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_routeCacheLine "routeCacheLine"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_nodeTable_routeCache_NLWR zwController/nodeTable/routeCache/NLWR
+
+\paragraph zw_controller_zwController_nodeTable_routeCache_NLWR_desc Description
+
+Next last working route
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_routeCacheLine "routeCacheLine"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_sucState zwController/sucState
+
+\paragraph zw_controller_zwController_sucState_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>object</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zw_controller_zwController_sucState_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_sucState_lastIndex "lastIndex"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_sucState_updateNodeList "updateNodeList"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zw_controller_zwController_sucState_lastIndex zwController/sucState/lastIndex
+
+\paragraph zw_controller_zwController_sucState_lastIndex_desc Description
+
+One-based index into updateNodeList (1-64) pointing at the last valid entry in the array. 255 (SUC_OUT_OF_DATE) if no updates has been sent
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_uint8 "uint8"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_sucState_updateNodeList zwController/sucState/updateNodeList
+
+\paragraph zw_controller_zwController_sucState_updateNodeList_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [object]</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+\paragraph zw_controller_zwController_sucState_updateNodeList_prop Properties
+
+<table>
+  <tr>
+    <th>Property</th>
+    <th>Required</th>
+    <th>Condition</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_sucState_updateNodeList_nodeId "nodeId"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_sucState_updateNodeList_changeType "changeType"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_zwController_sucState_updateNodeList_nodeInfo "nodeInfo"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+
+\subsubsection zw_controller_zwController_sucState_updateNodeList_nodeId zwController/sucState/updateNodeList/nodeId
+
+\paragraph zw_controller_zwController_sucState_updateNodeList_nodeId_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>\ref zw_controller_definitions_nodeId "nodeId"</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_sucState_updateNodeList_changeType zwController/sucState/updateNodeList/changeType
+
+\paragraph zw_controller_zwController_sucState_updateNodeList_changeType_desc Description
+
+SUC change type (1:Add, 2:Delete, 3:Update Range)
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>integer</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_sucState_updateNodeList_nodeInfo zwController/sucState/updateNodeList/nodeInfo
+
+\paragraph zw_controller_zwController_sucState_updateNodeList_nodeInfo_desc Description
+
+Command classes
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>array [\ref zw_controller_definitions_uint8 "uint8"]</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_zwController_applicationData zwController/applicationData
+
+\paragraph zw_controller_zwController_applicationData_desc Description
+
+Base64 encoded application data
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>string</td>
+    <td>False</td>
+    <td></td>
+  </tr>
+</table>
+
+\subsubsection zw_controller_appConfig appConfig
+
+\paragraph zw_controller_appConfig_desc Description
+
+<table>
+  <tr>
+    <th>Type</th>
+    <th>Required</th>
+    <th>Default</th>
+  </tr>
+  <tr>
+    <td>None</td>
+    <td>True</td>
+    <td></td>
+  </tr>
+</table>
+
+
+
+*/
