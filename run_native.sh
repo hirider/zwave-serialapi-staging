@@ -11,6 +11,7 @@ case $op in
             cd src
             sudo ./zipgateway
         break;;
+        #this is to check the file is working or not
 
     [2] )   sudo sed -i 's/define PROD/define DEV/' /home/aura/dev/SerialGateway/src/SerialApiCustom/SerialapiProcess.h
             docker exec zwave_dev /zgw/scripts/docker_build_native.sh
